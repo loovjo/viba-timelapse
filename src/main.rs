@@ -1,11 +1,20 @@
+use std::convert::TryInto;
+
+mod error;
 mod requestor;
 mod vibaimage;
 #[tokio::main]
 async fn main() {
+    let https = hyper_tls::HttpsConnector::new();
+    let client = hyper::client::Client::builder().build::<_, hyper::Body>(https);
 
-    let x = std::fs::File::open("/tmp/x.jpeg").unwrap();
+    let mut r = requestor::Requestor {
+        img_url: "https://vibacam.citrons.xyz/cam.jpg".try_into().unwrap(),
+        emit_path: "/tmp/xyz.jpeg".into(),
 
-    let i = vibaimage::Image::from_read(x).unwrap();
-
-    i.write(std::fs::File::create("/tmp/y.jpeg").unwrap()).unwrap();
+        client,
+        time_between_images: std::time::Duration::from_secs(5),
+        min_time_between_reqs: std::time::Duration::from_millis(100),
+    };
+    r.run().await.expect("epic failure");
 }

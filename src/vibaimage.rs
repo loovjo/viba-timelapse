@@ -1,8 +1,24 @@
 use image::ImageDecoder;
 
+#[derive(Clone)]
 pub struct Image {
     pub width: usize,
     pub data: Vec<(f64, f64, f64)>,
+}
+
+pub fn avg_images(imgs: Vec<Image>) -> Image {
+    let mut res = Image { width: imgs[0].width, data: vec![(0.0, 0.0, 0.0); imgs[0].data.len()] };
+
+    let n_imgs = imgs.len() as f64;
+    for img in imgs {
+        for (irgb, orgb) in img.data.into_iter().zip(res.data.iter_mut()) {
+            orgb.0 += irgb.0 / n_imgs;
+            orgb.1 += irgb.1 / n_imgs;
+            orgb.2 += irgb.2 / n_imgs;
+        }
+    }
+
+    res
 }
 
 impl Image {
