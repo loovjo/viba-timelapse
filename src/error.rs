@@ -3,6 +3,8 @@ pub enum VibaError {
     ImageError(image::ImageError),
     HyperError(hyper::Error),
     IOError(std::io::Error),
+    JoinError,
+    TimeStampError,
 }
 
 impl From<image::ImageError> for VibaError {

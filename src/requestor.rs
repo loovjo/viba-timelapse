@@ -1,6 +1,7 @@
 use crate::vibaimage::{Image, avg_images};
 use crate::error::VibaError;
 use hyper::body::HttpBody;
+use futures::prelude::*;
 
 pub struct Requestor<C: hyper::client::connect::Connect> {
     pub img_url: hyper::Uri,
@@ -51,15 +52,12 @@ impl<C: hyper::client::connect::Connect + Clone + Send + Sync + 'static> Request
             let max_time_left = deadline - tokio::time::Instant::now();
             let start = tokio::time::Instant::now();
 
-            println!("{:?}", max_time_left);
-
             tokio::select!(
                 _ = tokio::time::sleep(max_time_left) => {
                     break;
                 }
                 i = self.load_one_image() => {
                     images.push(i?);
-                    println!("... {:?}", tokio::time::Instant::now().duration_since(start));
                     let next_req_time = start + self.min_time_between_reqs;
                     if tokio::time::Instant::now() > next_req_time {
                         self.min_time_between_reqs *= 2;
@@ -76,41 +74,37 @@ impl<C: hyper::client::connect::Connect + Clone + Send + Sync + 'static> Request
 
     pub async fn run(&mut self) -> Result<(), VibaError> {
         let mut last_images: Option<Vec<Image>> = None;
-        let (error_tx, error_rx) = std::sync::mpsc::channel::<VibaError>();
 
         loop {
-            let (imgres, _) = tokio::join!(
+            let path = self.emit_path.clone();
+
+            let res = tokio::try_join!(
                 self.get_n_images(),
                 tokio::task::spawn_blocking({
-                    let cl_error_tx = error_tx.clone();
                     let images = last_images.take();
-                    move || {
+                    move || -> Result<(), VibaError> {
                         if let Some(last_images) = images {
                             let img = avg_images(last_images);
 
-                            let f = match std::fs::File::create("/tmp/b.jpeg") {
-                                Ok(f) => f,
-                                Err(e) => {
-                                    cl_error_tx.send(e.into()).expect("dead sender sadge");
-                                    return;
-                                }
-                            };
+                            let timestamp = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).map_err(|_| VibaError::TimeStampError)?;
 
-                            if let Err(e) = img.write(f) {
-                                cl_error_tx.send(e.into()).expect("dead sender sadge");
-                                return;
-                            }
+                            let f = std::fs::File::create(format!("{}/{}.jpeg", path, timestamp.as_millis()))?;
+
+                            img.write(f)?;
                         }
+                        Ok(())
                     }
-                }),
+                }).map(|r| r.unwrap_or(Err(VibaError::JoinError))),
             );
-            let (img, n_nonsleeps) = imgres?;
-            last_images = Some(img);
+            match res {
+                Ok(((imgs, n_nonsleeps), ())) => {
+                    println!("Collected {} images, nonsleeps = {}, delay = {:?}", imgs.len(), n_nonsleeps, self.min_time_between_reqs);
 
-            println!("nonsleeps = {}, delay = {:?}", n_nonsleeps, self.min_time_between_reqs);
-
-            for e in error_rx.try_iter() {
-                return Err(e);
+                    last_images = Some(imgs);
+                }
+                Err(e) => {
+                    eprintln!("Error: {:?}", e);
+                }
             }
         }
     }
